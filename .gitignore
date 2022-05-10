@@ -131,3 +131,6 @@ dmypy.json
 # Image folders
 data/
 runs/
+
+# DS Store
+.DS_Store

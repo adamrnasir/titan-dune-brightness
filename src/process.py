@@ -5,15 +5,19 @@ import time
 import os
 import get_regions as gr
 
+
 NBINS = 256
+
 
 def get_obstacle_regions(img):
     obstacles = cv2.inRange(img, (0, 254, 0), (0, 255, 0))
     return obstacles
 
+
 def get_external_region(img):
     external = cv2.inRange(img, (254, 0, 0), (255, 0, 0))
     return external
+
 
 def get_sample_region(img):
     obstacles = cv2.bitwise_not(get_obstacle_regions(img))
@@ -23,49 +27,58 @@ def get_sample_region(img):
     return cv2.bitwise_and(gray, exclude)
 
 
-def get_obstacle_coords(obstacles):
+def get_obstacles(obstacles):
     # Detect obstacle contours
-    contours, hierarchy = cv2.findContours(obstacles, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    # Get geometric center of each contour
-    obstacle_coords = []
+    contours, _ = cv2.findContours(obstacles, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    # Remove contours that are too small
+    contours = [c for c in contours if cv2.contourArea(c) > 100]
+    # Get leftmost point of each contour
+    l = []
+    c = []
     for contour in contours:
-        obstacle_coords.append(np.mean(contour, axis=0))
-    return obstacle_coords
+        l.append(contour[contour[:,:,0].argmin()][0])
+        c.append(np.mean(contour, axis=0))
+    centers = [x[0] for _, x in sorted(zip(l, c), key=lambda p: p[0][0])]
+    lefts = sorted(l, key=lambda x: x[0])
+    return lefts, centers
 
 
-def get_obstacle_centers(obstacles):
-    # Get geometric center of white points in obstacles image
-    obstacles_indices = np.where(obstacles == 255)
-    obstacles_coords = list(zip(obstacles_indices[0], obstacles_indices[1]))
-    obstacles_center = np.mean(obstacles_coords, axis=0)
-    return obstacles_center
-
-
-def get_light_regions(base, comp_thresh, obstacles, obstacles_center):
-
+def get_light_regions(base, comp_thresh, obstacle_lefts, obstacle_centers):
     # Get furthest white pixel from obstacles center in lights image
-    # lights_indices = np.where(lights == 255)
-    lights_indices = np.where(comp_thresh - obstacles == 255)
-    lights_coords = list(zip(lights_indices[0], lights_indices[1]))
-    lights_distances = [np.linalg.norm(
-        np.array(light) - np.array(obstacles_center)) for light in lights_coords]
+    distmap = np.zeros(base.shape)
+    lights_indices = np.where(comp_thresh == 255)
+    lights_coords = sorted(list(zip(lights_indices[0], lights_indices[1])), key=lambda x: x[1])
+    lights_distances = []
+    lidx = 0
+    for i, light in enumerate(lights_coords):
+        light = np.flip(light)
+        if lidx < len(obstacle_lefts) - 1 and light[0] > obstacle_lefts[lidx + 1][0]:
+            lidx += 1
+        dist = np.linalg.norm(light - obstacle_centers[lidx])
+        lights_distances.append(dist)
+        distmap[light[1], light[0]] = dist
     lights_values = [base[lights_coords[i][0], lights_coords[i][1]]
                      for i in range(len(lights_coords))]
     ld = np.max(lights_distances)
-    return lights_distances, ld, lights_values
+    return lights_distances, ld, lights_values, distmap
 
 
-def get_dark_regions(base, comp_thresh, obstacles, obstacles_center):
-    # Get furthest white pixel from obstacles center in darks image
-    # darks_indices = np.where(darks == 255)
+def get_dark_regions(base, comp_thresh, obstacle_lefts, obstacle_centers):
+    # Get furthest white pixel from obstacles center in lights image
     darks_indices = np.where(comp_thresh == 0)
-    darks_coords = list(zip(darks_indices[0], darks_indices[1]))
-    darks_distances = [np.linalg.norm(
-        np.array(dark) - np.array(obstacles_center)) for dark in darks_coords]
+    darks_coords = sorted(list(zip(darks_indices[0], darks_indices[1])), key=lambda x: x[1])
+    darks_distances = []
+    didx = 0
+    for i, light in enumerate(darks_coords):
+        light = np.flip(light)
+        if didx < len(obstacle_lefts) - 1 and light[0] > obstacle_lefts[didx + 1][0]:
+            didx += 1
+        dist = np.linalg.norm(light - obstacle_centers[didx])
+        darks_distances.append(dist)
     darks_values = [base[darks_coords[i][0], darks_coords[i][1]]
-                    for i in range(len(darks_coords))]
-    dd = np.max(darks_distances)
-    return darks_distances, dd, darks_values
+                     for i in range(len(darks_coords))]
+    ld = np.max(darks_distances)
+    return darks_distances, ld, darks_values
 
 
 def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
@@ -79,8 +92,9 @@ def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
     da = {i: [] for i in bins}
 
     for i in range(0, len(lights_distances), 1):
-        print("light ", i, " out of ", len(
-            lights_distances), ": Distance ", lights_distances[i], " Value ", lights_values[i])
+        if i % 1000000 == 0:
+            print("light ", i, " out of ", len(
+                lights_distances), ": Distance ", lights_distances[i], " Value ", lights_values[i])
         hash = lights_distances[i]
         j = 1
         while hash > bins[j-1]:
@@ -91,8 +105,9 @@ def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
         li[bin].append(lights_values[i])
 
     for i in range(0, len(darks_distances), 1):
-        print("dark ", i, " out of ", len(
-            darks_distances), ": Distance ", darks_distances[i], ", Value ", darks_values[i])
+        if i % 1000000 == 0:
+            print("dark ", i, " out of ", len(
+                darks_distances), ": Distance ", darks_distances[i], ", Value ", darks_values[i])
         hash = darks_distances[i]
         j = 1
         while hash > bins[j-1]:
@@ -112,12 +127,12 @@ def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
     return ds, vs
 
 
-def scatter(ds, vs, timestr):
+def scatter(ds, vs, outfolder):
     plt.scatter(ds, vs)
     plt.xlabel("Distance from obstacle, pixels")
     plt.ylabel("Ratio")
     plt.title("Brightness Ratio vs Distance")
-    plt.savefig("graph/out_{}.png".format(timestr))
+    plt.savefig(os.path.join(outfolder, "graph.png"))
     plt.clf()
 
 
@@ -132,36 +147,25 @@ def main():
 
     base = cv2.imread("data/t8_reproc1_corramb_bidr_nldsar_v2.EQUI4.256PPD.8bit.png")
     obstacles = get_obstacle_regions(base)
-    external = get_external_region(base)
     sample = get_sample_region(base)
     cv2.imwrite(os.path.join(outfolder, "sample.png"), sample)
     cv2.imwrite(os.path.join(outfolder, "obstacles.png"), obstacles)
-    cv2.imwrite(os.path.join(outfolder, "external.png"), external)
+
+    thresh = gr.threshold(sample)
+    cv2.imwrite(os.path.join(outfolder, "thresh.png"), thresh)
+
+    obstacle_lefts, obstacle_centers = get_obstacles(obstacles)
+
+    lights_distances, ld, lights_values, distmap = get_light_regions(sample, thresh, obstacle_lefts, obstacle_centers)
+
+    cv2.imwrite(os.path.join(outfolder, "distmap.png"), cv2.normalize(distmap, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8UC1))
+
+    darks_distances, dd, darks_values = get_dark_regions(sample, thresh, obstacle_lefts, obstacle_centers)
     
-    # cv2.imwrite("obstacles.png", get_obstacle_regions(base))
+    ds, vs = bin(lights_distances, darks_distances,
+                 lights_values, darks_values, ld, dd)
 
-
-    # base = cv2.imread('in/base_clean.png', cv2.IMREAD_GRAYSCALE)
-    
-    # comp_thresh = cv2.imread(
-    #     'out/thresh_05092022_014021.png', cv2.IMREAD_GRAYSCALE)
-    # darks = cv2.imread('in/darks.png', cv2.IMREAD_GRAYSCALE)
-    # lights = cv2.imread('in/lights.png', cv2.IMREAD_GRAYSCALE)
-
-    # thresh = gr.threshold(base)
-    # lines = gr.get_light_lines(thresh)
-    # lights = gr.draw_lines(lines, base)
-
-    # obstacles_center = get_obstacle_centers(obstacles)
-    # lights_distances, ld, lights_values = get_light_regions(
-    #     base, comp_thresh, obstacles, obstacles_center)
-    # darks_distances, dd, darks_values = get_dark_regions(
-    #     base, comp_thresh, obstacles, obstacles_center)
-
-    # ds, vs = bin(lights_distances, darks_distances,
-    #              lights_values, darks_values, ld, dd)
-
-    # scatter(ds, vs, timestr)
+    scatter(ds, vs, outfolder)
 
 
 if __name__ == "__main__":
