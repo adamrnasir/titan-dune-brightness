@@ -7,10 +7,30 @@ import get_regions as gr
 
 NBINS = 256
 
+def get_obstacle_regions(img):
+    obstacles = cv2.inRange(img, (0, 254, 0), (0, 255, 0))
+    return obstacles
+
+def get_external_region(img):
+    external = cv2.inRange(img, (254, 0, 0), (255, 0, 0))
+    return external
+
+def get_sample_region(img):
+    obstacles = cv2.bitwise_not(get_obstacle_regions(img))
+    external = cv2.bitwise_not(get_external_region(img))
+    exclude = cv2.bitwise_and(obstacles, external)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    return cv2.bitwise_and(gray, exclude)
+
 
 def get_obstacle_coords(obstacles):
-    obstacles_indices = np.where(obstacles == 255)
-    obstacles_coords = list(zip(obstacles_indices[0], obstacles_indices[1]))
+    # Detect obstacle contours
+    contours, hierarchy = cv2.findContours(obstacles, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    # Get geometric center of each contour
+    obstacle_coords = []
+    for contour in contours:
+        obstacle_coords.append(np.mean(contour, axis=0))
+    return obstacle_coords
 
 
 def get_obstacle_centers(obstacles):
@@ -107,30 +127,41 @@ def write_img(img, name, outfolder):
 
 def main():
     timestr = time.strftime("%m%d%Y_%H%M%S")
-    outfolder = "run_{}".format(timestr)
+    outfolder = os.path.join("runs", "run_{}".format(timestr))
     os.mkdir(outfolder)
 
-    base = cv2.imread('in/base_clean.png', cv2.IMREAD_GRAYSCALE)
-    obstacles = cv2.imread('in/obs_clean.png', cv2.IMREAD_GRAYSCALE)
-    comp_thresh = cv2.imread(
-        'out/thresh_05092022_014021.png', cv2.IMREAD_GRAYSCALE)
+    base = cv2.imread("data/t8_reproc1_corramb_bidr_nldsar_v2.EQUI4.256PPD.8bit.png")
+    obstacles = get_obstacle_regions(base)
+    external = get_external_region(base)
+    sample = get_sample_region(base)
+    cv2.imwrite(os.path.join(outfolder, "sample.png"), sample)
+    cv2.imwrite(os.path.join(outfolder, "obstacles.png"), obstacles)
+    cv2.imwrite(os.path.join(outfolder, "external.png"), external)
+    
+    # cv2.imwrite("obstacles.png", get_obstacle_regions(base))
+
+
+    # base = cv2.imread('in/base_clean.png', cv2.IMREAD_GRAYSCALE)
+    
+    # comp_thresh = cv2.imread(
+    #     'out/thresh_05092022_014021.png', cv2.IMREAD_GRAYSCALE)
     # darks = cv2.imread('in/darks.png', cv2.IMREAD_GRAYSCALE)
     # lights = cv2.imread('in/lights.png', cv2.IMREAD_GRAYSCALE)
 
-    thresh = gr.threshold(base)
-    lines = gr.get_light_lines(thresh)
-    lights = gr.draw_lines(lines, base)
+    # thresh = gr.threshold(base)
+    # lines = gr.get_light_lines(thresh)
+    # lights = gr.draw_lines(lines, base)
 
-    obstacles_center = get_obstacle_centers(obstacles)
-    lights_distances, ld, lights_values = get_light_regions(
-        base, comp_thresh, obstacles, obstacles_center)
-    darks_distances, dd, darks_values = get_dark_regions(
-        base, comp_thresh, obstacles, obstacles_center)
+    # obstacles_center = get_obstacle_centers(obstacles)
+    # lights_distances, ld, lights_values = get_light_regions(
+    #     base, comp_thresh, obstacles, obstacles_center)
+    # darks_distances, dd, darks_values = get_dark_regions(
+    #     base, comp_thresh, obstacles, obstacles_center)
 
-    ds, vs = bin(lights_distances, darks_distances,
-                 lights_values, darks_values, ld, dd)
+    # ds, vs = bin(lights_distances, darks_distances,
+    #              lights_values, darks_values, ld, dd)
 
-    scatter(ds, vs, timestr)
+    # scatter(ds, vs, timestr)
 
 
 if __name__ == "__main__":

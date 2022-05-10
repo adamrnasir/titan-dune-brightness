@@ -5,7 +5,7 @@ import time
 
 N_NEIGHBORS = 5
 
-base = cv2.imread('in/base_clean.png', cv2.IMREAD_GRAYSCALE)
+# base = cv2.imread('in/base_clean.png', cv2.IMREAD_GRAYSCALE)
 # inv = cv2.bitwise_not(base)
 
 
@@ -79,6 +79,7 @@ def draw_lines(lines, img):
 
 def main():
     timestr = time.strftime("%m%d%Y_%H%M%S")
+    base = cv2.imread('in/base_clean.png', cv2.IMREAD_GRAYSCALE)
 
     thresh = threshold(base)
     lines = get_light_lines(thresh)
