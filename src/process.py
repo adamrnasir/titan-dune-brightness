@@ -22,9 +22,9 @@ def get_external_region(img):
 def get_sample_region(img):
     obstacles = cv2.bitwise_not(get_obstacle_regions(img))
     external = cv2.bitwise_not(get_external_region(img))
-    exclude = cv2.bitwise_and(obstacles, external)
+    mask = cv2.bitwise_and(obstacles, external)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    return cv2.bitwise_and(gray, exclude)
+    return cv2.bitwise_and(gray, mask), mask
 
 
 def get_obstacles(obstacles):
@@ -61,24 +61,6 @@ def get_light_regions(base, comp_thresh, obstacle_lefts, obstacle_centers):
                      for i in range(len(lights_coords))]
     ld = np.max(lights_distances)
     return lights_distances, ld, lights_values, distmap
-
-
-def get_dark_regions(base, comp_thresh, obstacle_lefts, obstacle_centers):
-    # Get furthest white pixel from obstacles center in lights image
-    darks_indices = np.where(comp_thresh == 0)
-    darks_coords = sorted(list(zip(darks_indices[0], darks_indices[1])), key=lambda x: x[1])
-    darks_distances = []
-    didx = 0
-    for i, light in enumerate(darks_coords):
-        light = np.flip(light)
-        if didx < len(obstacle_lefts) - 1 and light[0] > obstacle_lefts[didx + 1][0]:
-            didx += 1
-        dist = np.linalg.norm(light - obstacle_centers[didx])
-        darks_distances.append(dist)
-    darks_values = [base[darks_coords[i][0], darks_coords[i][1]]
-                     for i in range(len(darks_coords))]
-    ld = np.max(darks_distances)
-    return darks_distances, ld, darks_values
 
 
 def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
@@ -147,7 +129,7 @@ def main():
 
     base = cv2.imread("data/t8_reproc1_corramb_bidr_nldsar_v2.EQUI4.256PPD.8bit.png")
     obstacles = get_obstacle_regions(base)
-    sample = get_sample_region(base)
+    sample, mask = get_sample_region(base)
     cv2.imwrite(os.path.join(outfolder, "sample.png"), sample)
     cv2.imwrite(os.path.join(outfolder, "obstacles.png"), obstacles)
 
@@ -156,12 +138,14 @@ def main():
 
     obstacle_lefts, obstacle_centers = get_obstacles(obstacles)
 
-    lights_distances, ld, lights_values, distmap = get_light_regions(sample, thresh, obstacle_lefts, obstacle_centers)
+    lights_distances, ld, lights_values, distmap = get_light_regions(sample, np.bitwise_and(thresh, mask), obstacle_lefts, obstacle_centers)
 
     cv2.imwrite(os.path.join(outfolder, "distmap.png"), cv2.normalize(distmap, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8UC1))
 
-    darks_distances, dd, darks_values = get_dark_regions(sample, thresh, obstacle_lefts, obstacle_centers)
+    darks_distances, dd, darks_values, darkmap = get_light_regions(sample, np.bitwise_and(np.bitwise_not(thresh), mask), obstacle_lefts, obstacle_centers)
     
+    cv2.imwrite(os.path.join(outfolder, "darkmap.png"), cv2.normalize(darkmap, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8UC1))
+
     ds, vs = bin(lights_distances, darks_distances,
                  lights_values, darks_values, ld, dd)
 
