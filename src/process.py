@@ -7,6 +7,7 @@ import get_regions as gr
 
 
 NBINS = 256
+NSKIP = 10000
 
 
 def get_obstacle_regions(img):
@@ -49,14 +50,19 @@ def get_light_regions(base, comp_thresh, obstacle_lefts, obstacle_centers):
     lights_indices = np.where(comp_thresh == 255)
     lights_coords = sorted(list(zip(lights_indices[0], lights_indices[1])), key=lambda x: x[1])
     lights_distances = []
-    lidx = 0
-    for i, light in enumerate(lights_coords):
-        light = np.flip(light)
-        if lidx < len(obstacle_lefts) - 1 and light[0] > obstacle_lefts[lidx + 1][0]:
-            lidx += 1
-        dist = np.linalg.norm(light - obstacle_centers[lidx])
-        lights_distances.append(dist)
-        distmap[light[1], light[0]] = dist
+    # lidx = 0
+    for i, l in enumerate(lights_coords):
+        if i % NSKIP == 0:
+            print("Getting distance ", i, " out of ", len(lights_coords))
+        light = np.flip(l)
+        min_dist = np.inf
+        for o in obstacle_centers:
+            min_dist = min(min_dist, np.linalg.norm(light - o))
+        # if lidx < len(obstacle_lefts) - 1 and light[0] > obstacle_lefts[lidx + 1][0]:
+        #     lidx += 1
+        # dist = np.linalg.norm(light - obstacle_centers[lidx])
+        lights_distances.append(min_dist)
+        distmap[light[1], light[0]] = min_dist
     lights_values = [base[lights_coords[i][0], lights_coords[i][1]]
                      for i in range(len(lights_coords))]
     ld = np.max(lights_distances)
@@ -74,8 +80,8 @@ def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
     da = {i: [] for i in bins}
 
     for i in range(0, len(lights_distances), 1):
-        if i % 1000000 == 0:
-            print("light ", i, " out of ", len(
+        if i % NSKIP == 0:
+            print("Binning light ", i, " out of ", len(
                 lights_distances), ": Distance ", lights_distances[i], " Value ", lights_values[i])
         hash = lights_distances[i]
         j = 1
@@ -87,8 +93,8 @@ def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
         li[bin].append(lights_values[i])
 
     for i in range(0, len(darks_distances), 1):
-        if i % 1000000 == 0:
-            print("dark ", i, " out of ", len(
+        if i % NSKIP == 0:
+            print("Binning dark ", i, " out of ", len(
                 darks_distances), ": Distance ", darks_distances[i], ", Value ", darks_values[i])
         hash = darks_distances[i]
         j = 1
@@ -128,6 +134,7 @@ def main():
     os.mkdir(outfolder)
 
     base = cv2.imread("data/t8_reproc1_corramb_bidr_nldsar_v2.EQUI4.256PPD.8bit.png")
+    # base = cv2.imread("data/base_clean.png")
     obstacles = get_obstacle_regions(base)
     sample, mask = get_sample_region(base)
     cv2.imwrite(os.path.join(outfolder, "sample.png"), sample)
