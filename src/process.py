@@ -42,12 +42,11 @@ def get_obstacles(obstacles):
         c.append(np.mean(contour, axis=0))
     centers = [x[0] for _, x in sorted(zip(l, c), key=lambda p: p[0][0])]
     contours = [c for _, c in sorted(zip(l, contours), key=lambda p: p[0][0])]
-    return centers, contours
+    return contours, centers
 
 
-def get_light_regions(base, comp_thresh, obstacle_centers, obstacle_contours):
-    # Get furthest white pixel from obstacles center in lights image
-    distmap = np.zeros(base.shape)
+def get_light_regions(base, comp_thresh, obstacle_contours):
+    # distmap = np.zeros(base.shape)
     lights_indices = np.where(comp_thresh == 255)
     lights_coords = sorted(list(zip(lights_indices[0], lights_indices[1])), key=lambda x: x[1])
     lights_distances = []
@@ -58,11 +57,23 @@ def get_light_regions(base, comp_thresh, obstacle_centers, obstacle_contours):
             m = map(lambda x: np.linalg.norm(light - x[0]), c[1::min(10,len(c)//50)])
             min_dist = min(min_dist, min(m))
         lights_distances.append(min_dist)
-        distmap[light[1], light[0]] = min_dist
+        # distmap[light[1], light[0]] = min_dist
     lights_values = [base[lights_coords[i][0], lights_coords[i][1]]
                      for i in range(len(lights_coords))]
     ld = np.max(lights_distances)
-    return lights_distances, ld, lights_values, distmap
+    return lights_distances, ld, lights_values
+
+
+def hashbin(dists, vals, bins, dict):
+    for i in range(0, len(dists), 1):
+        hash = dists[i]
+        j = 1
+        while hash > bins[j-1]:
+            j += 1
+            if j == len(bins):
+                break
+        bin = bins[j-1]
+        dict[bin].append(vals[i])
 
 
 def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
@@ -74,30 +85,29 @@ def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
     li = {i: [] for i in bins}
     da = {i: [] for i in bins}
 
-    for i in range(0, len(lights_distances), 1):
-        hash = lights_distances[i]
-        j = 1
-        while hash > bins[j-1]:
-            j += 1
-            if j == len(bins):
-                break
-        bin = bins[j-1]
-        li[bin].append(lights_values[i])
+    hashbin(lights_distances, lights_values, bins, li)
+    hashbin(darks_distances, darks_values, bins, da)
 
-    for i in range(0, len(darks_distances), 1):
-        hash = darks_distances[i]
-        j = 1
-        while hash > bins[j-1]:
-            j += 1
-            if j == len(bins):
-                break
-        bin = bins[j-1]
-        da[bin].append(darks_values[i])
+
+    # Get mean bin size
+    li_mean = np.mean([len(li[i]) for i in bins]) 
+    da_mean = np.mean([len(da[i]) for i in bins])
+
+    # Get bin size standard deviation
+    li_std = np.std([len(li[i]) for i in bins])
+    da_std = np.std([len(da[i]) for i in bins])
 
     lval = {d: np.mean(li[d]) for d in li.keys()}
     dval = {d: np.mean(da[d]) for d in da.keys()}
 
-    ldivd = {d: lval[d] / dval[d] for d in li.keys()}
+    print("Mean bin size:" + str(li_mean) + " " + str(da_mean))
+    print("Std bin size:" + str(li_std) + " " + str(da_std))
+
+    ndev = 1
+
+    ldivd = { d: lval[d] / dval[d] for d in li.keys() 
+              if (len(li[d]) > li_mean - ndev * li_std) 
+              and (len(da[d]) > da_mean - ndev * da_std)}
 
     ds = list(ldivd.keys())
     vs = list(ldivd.values())
@@ -125,13 +135,13 @@ def process(img, outfolder):
 
     thresh = gr.threshold(sample)
 
-    obstacle_centers, obstacle_contours = get_obstacles(obstacles)
+    obstacle_contours, _ = get_obstacles(obstacles)
     print("Got obstacles")
 
-    lights_distances, ld, lights_values, _ = get_light_regions(sample, np.bitwise_and(thresh, mask), obstacle_centers, obstacle_contours)
+    lights_distances, ld, lights_values = get_light_regions(sample, np.bitwise_and(thresh, mask), obstacle_contours)
     print("Got lights")
 
-    darks_distances, dd, darks_values, _ = get_light_regions(sample, np.bitwise_and(np.bitwise_not(thresh), mask), obstacle_centers, obstacle_contours)
+    darks_distances, dd, darks_values = get_light_regions(sample, np.bitwise_and(np.bitwise_not(thresh), mask), obstacle_contours)
     print("Got darks")
 
     ds, vs = bin(lights_distances, darks_distances,
@@ -152,7 +162,7 @@ def main():
     timestr = time.strftime("%m%d%Y_%H%M%S")
     outfolder = os.path.join("runs", "run_{}".format(timestr))
     os.mkdir(outfolder)
-    for img in glob.glob('data/sample/*.png'):
+    for img in glob.glob('data/test/*.png'):
         process(img, outfolder)
         print("Processed {}".format(img))
 
