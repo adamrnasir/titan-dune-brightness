@@ -4,10 +4,11 @@ from matplotlib import pyplot as plt
 import time
 import os
 import get_regions as gr
+import glob
 
 
 NBINS = 256
-NSKIP = 10000
+NSKIP = 1000
 
 
 def get_obstacle_regions(img):
@@ -40,27 +41,22 @@ def get_obstacles(obstacles):
         l.append(contour[contour[:,:,0].argmin()][0])
         c.append(np.mean(contour, axis=0))
     centers = [x[0] for _, x in sorted(zip(l, c), key=lambda p: p[0][0])]
-    lefts = sorted(l, key=lambda x: x[0])
-    return lefts, centers
+    contours = [c for _, c in sorted(zip(l, contours), key=lambda p: p[0][0])]
+    return centers, contours
 
 
-def get_light_regions(base, comp_thresh, obstacle_lefts, obstacle_centers):
+def get_light_regions(base, comp_thresh, obstacle_centers, obstacle_contours):
     # Get furthest white pixel from obstacles center in lights image
     distmap = np.zeros(base.shape)
     lights_indices = np.where(comp_thresh == 255)
     lights_coords = sorted(list(zip(lights_indices[0], lights_indices[1])), key=lambda x: x[1])
     lights_distances = []
-    # lidx = 0
     for i, l in enumerate(lights_coords):
-        if i % NSKIP == 0:
-            print("Getting distance ", i, " out of ", len(lights_coords))
         light = np.flip(l)
         min_dist = np.inf
-        for o in obstacle_centers:
-            min_dist = min(min_dist, np.linalg.norm(light - o))
-        # if lidx < len(obstacle_lefts) - 1 and light[0] > obstacle_lefts[lidx + 1][0]:
-        #     lidx += 1
-        # dist = np.linalg.norm(light - obstacle_centers[lidx])
+        for c in obstacle_contours:
+            m = map(lambda x: np.linalg.norm(light - x[0]), c[1::min(10,len(c)//50)])
+            min_dist = min(min_dist, min(m))
         lights_distances.append(min_dist)
         distmap[light[1], light[0]] = min_dist
     lights_values = [base[lights_coords[i][0], lights_coords[i][1]]
@@ -74,15 +70,11 @@ def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
     step = furthest_r / NBINS
 
     bins = [n * step for n in range(NBINS)]
-    print(bins)
 
     li = {i: [] for i in bins}
     da = {i: [] for i in bins}
 
     for i in range(0, len(lights_distances), 1):
-        if i % NSKIP == 0:
-            print("Binning light ", i, " out of ", len(
-                lights_distances), ": Distance ", lights_distances[i], " Value ", lights_values[i])
         hash = lights_distances[i]
         j = 1
         while hash > bins[j-1]:
@@ -93,9 +85,6 @@ def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
         li[bin].append(lights_values[i])
 
     for i in range(0, len(darks_distances), 1):
-        if i % NSKIP == 0:
-            print("Binning dark ", i, " out of ", len(
-                darks_distances), ": Distance ", darks_distances[i], ", Value ", darks_values[i])
         hash = darks_distances[i]
         j = 1
         while hash > bins[j-1]:
@@ -110,17 +99,17 @@ def bin(lights_distances, darks_distances, lights_values, darks_values, ld, dd):
 
     ldivd = {d: lval[d] / dval[d] for d in li.keys()}
 
-    ds = ldivd.keys()
-    vs = ldivd.values()
+    ds = list(ldivd.keys())
+    vs = list(ldivd.values())
     return ds, vs
 
 
-def scatter(ds, vs, outfolder):
+def scatter(img, ds, vs, outfolder):
     plt.scatter(ds, vs)
     plt.xlabel("Distance from obstacle, pixels")
     plt.ylabel("Ratio")
     plt.title("Brightness Ratio vs Distance")
-    plt.savefig(os.path.join(outfolder, "graph.png"))
+    plt.savefig(os.path.join(outfolder, (img + "_graph.png")))
     plt.clf()
 
 
@@ -128,35 +117,44 @@ def write_img(img, name, outfolder):
     cv2.imwrite(os.path.join(outfolder, name) + ".png", img)
 
 
+def process(img, outfolder):
+    base = cv2.imread(img)
+
+    obstacles = get_obstacle_regions(base)
+    sample, mask = get_sample_region(base)
+
+    thresh = gr.threshold(sample)
+
+    obstacle_centers, obstacle_contours = get_obstacles(obstacles)
+    print("Got obstacles")
+
+    lights_distances, ld, lights_values, _ = get_light_regions(sample, np.bitwise_and(thresh, mask), obstacle_centers, obstacle_contours)
+    print("Got lights")
+
+    darks_distances, dd, darks_values, _ = get_light_regions(sample, np.bitwise_and(np.bitwise_not(thresh), mask), obstacle_centers, obstacle_contours)
+    print("Got darks")
+
+    ds, vs = bin(lights_distances, darks_distances,
+                 lights_values, darks_values, ld, dd)
+    print("Binned")
+
+    img_name = (os.path.basename(img)).split(".")[0]
+
+    # write to csv file
+    with open(os.path.join(outfolder, (img_name + ".csv")), "w") as f:
+        for i, d in enumerate(ds):
+                f.write(str(d) + "," + str(vs[i]) + "\n")
+
+    scatter(img_name, ds, vs, outfolder)
+
+
 def main():
     timestr = time.strftime("%m%d%Y_%H%M%S")
     outfolder = os.path.join("runs", "run_{}".format(timestr))
     os.mkdir(outfolder)
-
-    base = cv2.imread("data/t8_reproc1_corramb_bidr_nldsar_v2.EQUI4.256PPD.8bit.png")
-    # base = cv2.imread("data/base_clean.png")
-    obstacles = get_obstacle_regions(base)
-    sample, mask = get_sample_region(base)
-    cv2.imwrite(os.path.join(outfolder, "sample.png"), sample)
-    cv2.imwrite(os.path.join(outfolder, "obstacles.png"), obstacles)
-
-    thresh = gr.threshold(sample)
-    cv2.imwrite(os.path.join(outfolder, "thresh.png"), thresh)
-
-    obstacle_lefts, obstacle_centers = get_obstacles(obstacles)
-
-    lights_distances, ld, lights_values, distmap = get_light_regions(sample, np.bitwise_and(thresh, mask), obstacle_lefts, obstacle_centers)
-
-    cv2.imwrite(os.path.join(outfolder, "distmap.png"), cv2.normalize(distmap, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8UC1))
-
-    darks_distances, dd, darks_values, darkmap = get_light_regions(sample, np.bitwise_and(np.bitwise_not(thresh), mask), obstacle_lefts, obstacle_centers)
-    
-    cv2.imwrite(os.path.join(outfolder, "darkmap.png"), cv2.normalize(darkmap, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8UC1))
-
-    ds, vs = bin(lights_distances, darks_distances,
-                 lights_values, darks_values, ld, dd)
-
-    scatter(ds, vs, outfolder)
+    for img in glob.glob('data/sample/*.png'):
+        process(img, outfolder)
+        print("Processed {}".format(img))
 
 
 if __name__ == "__main__":

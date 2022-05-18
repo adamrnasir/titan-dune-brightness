@@ -5,9 +5,6 @@ import time
 
 N_NEIGHBORS = 5
 
-# base = cv2.imread('in/base_clean.png', cv2.IMREAD_GRAYSCALE)
-# inv = cv2.bitwise_not(base)
-
 
 def get_theta(line):
     return np.arctan2(
